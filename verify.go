@@ -1,4 +1,4 @@
-package firebase
+package jwt
 
 import (
 	"crypto/rsa"
@@ -17,7 +17,8 @@ const (
 	clientCertURL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
 )
 
-func VerifyIDToken(idToken string, googleProjectID string) (string, error) {
+// VerifyIDToken ...
+func VerifyIDToken(idToken string, projectID string) (string, error) {
 	keys, err := fetchPublicKeys()
 
 	if err != nil {
@@ -30,13 +31,7 @@ func VerifyIDToken(idToken string, googleProjectID string) (string, error) {
 		}
 		kid := token.Header["kid"]
 
-		certPEM := string(*keys[kid.(string)])
-		certPEM = strings.Replace(certPEM, "\\n", "\n", -1)
-		certPEM = strings.Replace(certPEM, "\"", "", -1)
-		block, _ := pem.Decode([]byte(certPEM))
-		var cert *x509.Certificate
-		cert, _ = x509.ParseCertificate(block.Bytes)
-		rsaPublicKey := cert.PublicKey.(*rsa.PublicKey)
+		rsaPublicKey := convertKey(string(*keys[kid.(string)]))
 
 		return rsaPublicKey, nil
 	})
@@ -45,21 +40,30 @@ func VerifyIDToken(idToken string, googleProjectID string) (string, error) {
 		return "", err
 	}
 
+	if parsedToken == nil {
+		return "", errors.New("Nil parsed token")
+	}
+
 	errMessage := ""
 
-	if parsedToken.Claims["aud"].(string) != googleProjectID {
-		errMessage = "Firebase Auth ID token has incorrect 'aud' claim: " + parsedToken.Claims["aud"].(string)
-	} else if parsedToken.Claims["iss"].(string) != "https://securetoken.google.com/"+googleProjectID {
-		errMessage = "Firebase Auth ID token has incorrect 'iss' claim"
-	} else if parsedToken.Claims["sub"].(string) == "" || len(parsedToken.Claims["sub"].(string)) > 128 {
-		errMessage = "Firebase Auth ID token has invalid 'sub' claim"
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if ok && parsedToken.Valid {
+		if claims["aud"].(string) != projectID {
+			errMessage = "Firebase Auth ID token has incorrect 'aud' claim: " + claims["aud"].(string)
+		} else if claims["iss"].(string) != "https://securetoken.google.com/"+projectID {
+			errMessage = "Firebase Auth ID token has incorrect 'iss' claim"
+		} else if claims["sub"].(string) == "" || len(claims["sub"].(string)) > 128 {
+			errMessage = "Firebase Auth ID token has invalid 'sub' claim"
+		}
+	} else {
+		fmt.Println(err)
 	}
 
 	if errMessage != "" {
 		return "", errors.New(errMessage)
 	}
 
-	return string(parsedToken.Claims["sub"].(string)), nil
+	return claims["sub"].(string), nil
 }
 
 func fetchPublicKeys() (map[string]*json.RawMessage, error) {
@@ -74,4 +78,15 @@ func fetchPublicKeys() (map[string]*json.RawMessage, error) {
 	err = decoder.Decode(&objmap)
 
 	return objmap, err
+}
+
+func convertKey(key string) interface{} {
+	certPEM := key
+	certPEM = strings.Replace(certPEM, "\\n", "\n", -1)
+	certPEM = strings.Replace(certPEM, "\"", "", -1)
+	block, _ := pem.Decode([]byte(certPEM))
+	cert, _ := x509.ParseCertificate(block.Bytes)
+	rsaPublicKey := cert.PublicKey.(*rsa.PublicKey)
+
+	return rsaPublicKey
 }
