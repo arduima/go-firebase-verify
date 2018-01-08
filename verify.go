@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dgrijalva/jwt-go"
+	jwt "github.com/dgrijalva/jwt-go"
 )
 
 const (
@@ -18,11 +18,11 @@ const (
 )
 
 // VerifyIDToken ...
-func VerifyIDToken(idToken string, projectID string) (string, error) {
+func VerifyIDToken(idToken string, projectID string) (map[string]interface{}, error) {
 	keys, err := fetchPublicKeys()
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	parsedToken, err := jwt.Parse(idToken, func(token *jwt.Token) (interface{}, error) {
@@ -30,22 +30,19 @@ func VerifyIDToken(idToken string, projectID string) (string, error) {
 			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
 		}
 		kid := token.Header["kid"]
-
 		rsaPublicKey := convertKey(string(*keys[kid.(string)]))
-
 		return rsaPublicKey, nil
 	})
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if parsedToken == nil {
-		return "", errors.New("Nil parsed token")
+		return nil, errors.New("Nil parsed token")
 	}
 
 	errMessage := ""
-
 	claims, ok := parsedToken.Claims.(jwt.MapClaims)
 	if ok && parsedToken.Valid {
 		if claims["aud"].(string) != projectID {
@@ -55,20 +52,17 @@ func VerifyIDToken(idToken string, projectID string) (string, error) {
 		} else if claims["sub"].(string) == "" || len(claims["sub"].(string)) > 128 {
 			errMessage = "Firebase Auth ID token has invalid 'sub' claim"
 		}
-	} else {
-		fmt.Println(err)
 	}
 
 	if errMessage != "" {
-		return "", errors.New(errMessage)
+		return nil, errors.New(errMessage)
 	}
 
-	return claims["sub"].(string), nil
+	return claims, nil
 }
 
 func fetchPublicKeys() (map[string]*json.RawMessage, error) {
 	resp, err := http.Get(clientCertURL)
-
 	if err != nil {
 		return nil, err
 	}
